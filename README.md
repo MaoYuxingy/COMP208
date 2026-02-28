@@ -13,22 +13,14 @@ NavIA 是一款原生的 iOS 旅行规划与导航 App。它由 Python FastAPI �
 请按照以下步骤，把后端的本地服务器跑起来：
 
 1. 克隆代码到本地电脑：
-```bash
 git clone [https://github.com/MaoYuxingy/COMP208.git](https://github.com/MaoYuxingy/COMP208.git)
 cd NavIA_Backend
 
 2. 安装所需的 Python 依赖包：
-
-Bash
 pip install -r requirements.txt
 
-打开文件，把我在微信群里发的那串 Google Maps API Key 贴进去，格式严格如下：
-
-Plaintext
-GOOGLE_MAPS_API_KEY=群里发的这串密钥
-4. 启动本地服务器：
-
-Bash
+3. 启动本地服务器：
 uvicorn main:app --reload
 
 启动成功后，在浏览器打开 API 接口文档进行测试：http://127.0.0.1:8000/docs
+
