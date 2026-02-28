@@ -1,4 +1,4 @@
-# NavIA - 多重约束的旅行规划与导航应用
+# NavIA 
 
 NavIA 是一款原生的 iOS 旅行规划与导航 App。它由 Python FastAPI 后端支持，并包含一个专门处理多重约束（如营业时间、距离）的路线规划引擎。
 
@@ -23,4 +23,5 @@ pip install -r requirements.txt
 uvicorn main:app --reload
 
 启动成功后，在浏览器打开 API 接口文档进行测试：http://127.0.0.1:8000/docs
+
 
