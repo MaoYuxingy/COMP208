@@ -1,42 +1,39 @@
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from datetime import time, date, datetime
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import datetime
+import googlemaps
+import os
+from dotenv import load_dotenv
 
-# --- 1. 初始化 FastAPI 应用 ---
+# 1. 加载环境变量并初始化 Google Maps 客户端
+load_dotenv()
+gmaps = googlemaps.Client(key=os.getenv("GOOGLE_MAPS_API_KEY"))
+
 app = FastAPI(
     title="NavIA Backend API",
-    description="This is the core API for the NavIA multi-stop travel planning system.",
+    description="旅游路线规划与优化后端服务",
     version="1.0.0"
 )
 
-# --- 2. 核心数据模型 (严格根据 Data Dictionary 生成) ---
+# --- 数据模型 (Data Models) ---
 
 class Place(BaseModel):
     place_id: str
     name: str
     latitude: float
     longitude: float
-    opening_time: Optional[time] = None
-    closing_time: Optional[time] = None
-    estimated_visit_duration: Optional[int] = Field(None, description="Suggested stay duration in minutes")
-    interest_score: Optional[float] = Field(None, ge=0.0, le=10.0, description="Value used in optimisation scoring")
-    category: Optional[str] = None
-    cached: bool
+    cached: bool = False
 
-class Trip(BaseModel):
+class TripInfo(BaseModel):
     trip_id: str
     user_id: str
     title: str
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    total_available_time: int = Field(..., description="Time budget for optimisation (minutes)")
+    total_available_time: int  # 单位：分钟
     created_at: datetime
 
-# --- 3. 接口请求与响应模型 ---
-
 class RouteRequest(BaseModel):
-    trip_info: Trip
+    trip_info: TripInfo
     places_to_visit: List[Place]
 
 class RouteResponse(BaseModel):
@@ -46,20 +43,50 @@ class RouteResponse(BaseModel):
     total_time_minutes: int
     optimized_order: List[str]
 
-# --- 4. API 路由端点 (Endpoints) ---
+# --- 核心接口 (API Endpoints) ---
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to NavIA API. Go to /docs for documentation."}
+    return {"message": "Welcome to NavIA API - Real-time Routing Enabled"}
 
 @app.post("/api/v1/optimize-route", response_model=RouteResponse, tags=["Routing"])
 async def optimize_route(request: RouteRequest):
-    # 这里以后会替换成你们队友写的真实的 TSP 算法
-    # 现在先返回一个假的测试响应，保证前后端能通
-    return RouteResponse(
-        route_id="route_test_001",
-        status="FEASIBLE",
-        total_distance_km=12.5,
-        total_time_minutes=210,
-        optimized_order=[place.place_id for place in request.places_to_visit]
-    )
+    # 1. 提取所有景点的坐标字符串，格式为 "lat,lng"
+    locations = [f"{p.latitude},{p.longitude}" for p in request.places_to_visit]
+    
+    # 安全检查：如果景点少于2个，无法计算路程
+    if len(locations) < 2:
+        return RouteResponse(
+            route_id="err_insufficient_data",
+            status="NEED_MORE_PLACES",
+            total_distance_km=0.0,
+            total_time_minutes=0,
+            optimized_order=[p.place_id for p in request.places_to_visit]
+        )
+
+    try:
+        # 2. 调用 Google API 获取距离矩阵
+        # origins 和 destinations 传入相同列表，获取所有点对点的通行数据
+        matrix = gmaps.distance_matrix(
+            origins=locations, 
+            destinations=locations, 
+            mode='driving'
+        )
+
+        total_dist_meters = 0
+        total_time_seconds = 0
+        
+        # 3. 【核心累加逻辑】遍历列表，计算相邻两点间的路程 (0->1, 1->2...)
+        for i in range(len(locations) - 1):
+            element = matrix['rows'][i]['elements'][i+1]
+            if element['status'] == 'OK':
+                total_dist_meters += element['distance']['value']
+                total_time_seconds += element['duration']['value']
+            else:
+                raise HTTPException(status_code=400, detail=f"无法获取点 {i} 到点 {i+1} 的路况")
+
+        # 4. 转换单位并返回结果
+        return RouteResponse(
+            route_id="route_multilevel_v1",
+            status="SUCCESS",
+            total_distance
