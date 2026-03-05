@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 # 1. 加载环境变量并初始化 Google Maps 客户端
 load_dotenv()
-gmaps = googlemaps.Client(key=os.getenv("GOOGLE_MAPS_API_KEY"))
+gmaps = googlemaps.Client(key=os.getenv("GOOGLE_MAPS_API_KEY"), timeout=10)
 
 app = FastAPI(
     title="NavIA Backend API",
@@ -24,12 +24,13 @@ class Place(BaseModel):
     latitude: float
     longitude: float
     cached: bool = False
+    visit_duration_minutes: int = 60  # 【V3 新增】默认每个景点逛 1 小时
 
 class TripInfo(BaseModel):
     trip_id: str
     user_id: str
     title: str
-    total_available_time: int  # 单位：分钟
+    total_available_time: int  # 【V3 核心】用户总可用时间（分钟）
     created_at: datetime
 
 class RouteRequest(BaseModel):
@@ -42,6 +43,7 @@ class RouteResponse(BaseModel):
     total_distance_km: float
     total_time_minutes: int
     optimized_order: List[str]
+    dropped_places: List[str]  # 【V3 新增】告诉前端哪些景点因为时间不够被砍掉了
 
 # --- 核心接口 (API Endpoints) ---
 
@@ -57,7 +59,8 @@ async def optimize_route(request: RouteRequest):
             status="NEED_MORE_PLACES",
             total_distance_km=0.0,
             total_time_minutes=0,
-            optimized_order=[p.place_id for p in request.places_to_visit]
+            optimized_order=[p.place_id for p in request.places_to_visit],
+            dropped_places=[]
         )
 
     try:
@@ -65,23 +68,29 @@ async def optimize_route(request: RouteRequest):
         locations = [f"{p.latitude},{p.longitude}" for p in request.places_to_visit]
         matrix = gmaps.distance_matrix(origins=locations, destinations=locations, mode='driving')
 
-        # 2. 贪心算法排序
+        if not matrix or not matrix.get('rows'):
+            raise ValueError("Google Maps 返回了空数据或无法计算路况")
+
+        # 2. 贪心算法 + 时间背包 (V3)
         unvisited = list(range(len(request.places_to_visit)))
         optimized_indices = []
         
-        # 默认从用户输入的第一个点开始
+        # 强制起点（比如酒店），起点通常不算游玩时间
         current_idx = unvisited.pop(0)
         optimized_indices.append(current_idx)
 
         total_dist_meters = 0
         total_time_seconds = 0
+        
+        # 获取用户的总时间预算 (转换为秒)
+        time_budget_seconds = request.trip_info.total_available_time * 60
 
         while unvisited:
             nearest_neighbor = -1
             min_dist = float('inf')
             temp_time = 0
 
-            # 在剩余点中找最近的
+            # 找最近的邻居
             for next_idx in unvisited:
                 element = matrix['rows'][current_idx]['elements'][next_idx]
                 if element['status'] == 'OK':
@@ -94,27 +103,39 @@ async def optimize_route(request: RouteRequest):
             if nearest_neighbor == -1:
                 break
             
-            # 累加数据并移动到下一个点
+            # 【核心校验】如果去下一个点，时间够不够？
+            visit_time_seconds = request.places_to_visit[nearest_neighbor].visit_duration_minutes * 60
+            predicted_time = total_time_seconds + temp_time + visit_time_seconds
+            
+            if predicted_time > time_budget_seconds:
+                # 时间不够了！停止规划，剩下的点全部放弃
+                break 
+            
+            # 时间充足，加入行程
             total_dist_meters += min_dist
-            total_time_seconds += temp_time
+            total_time_seconds += (temp_time + visit_time_seconds)
             current_idx = nearest_neighbor
             unvisited.remove(nearest_neighbor)
             optimized_indices.append(nearest_neighbor)
 
-        # 3. 构造优化后的景点顺序 ID 列表
+        # 3. 构造返回结果
         optimized_place_ids = [request.places_to_visit[i].place_id for i in optimized_indices]
+        dropped_place_ids = [request.places_to_visit[i].place_id for i in unvisited] # 没被访问的点就是被砍掉的
 
         return RouteResponse(
-            route_id="route_optimized_v1",
-            status="SUCCESS",
+            route_id="route_optimized_v3",
+            status="SUCCESS_WITH_TIME_LIMIT",
             total_distance_km=round(total_dist_meters / 1000.0, 2),
             total_time_minutes=total_time_seconds // 60,
-            optimized_order=optimized_place_ids
+            optimized_order=optimized_place_ids,
+            dropped_places=dropped_place_ids # 返回被砍掉的景点
         )
 
+    except googlemaps.exceptions.ApiError as e:
+        raise HTTPException(status_code=403, detail=f"地图服务授权失败: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-# 必须保留这一段，否则 Uvicorn 有时会找不到入口
+        raise HTTPException(status_code=500, detail=f"路径规划暂时不可用: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
