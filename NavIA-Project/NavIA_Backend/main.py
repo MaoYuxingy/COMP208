@@ -5,6 +5,8 @@ from datetime import datetime
 import googlemaps
 import os
 from dotenv import load_dotenv
+from database import engine, SessionLocal
+import models
 
 # 1. 加载环境变量并初始化 Google Maps 客户端
 load_dotenv()
@@ -15,6 +17,9 @@ app = FastAPI(
     description="旅游路线规划与优化后端服务",
     version="1.0.0"
 )
+
+# --- 关键：在这里插入数据库初始化代码 ---
+models.Base.metadata.create_all(bind=engine)
 
 # --- 数据模型 (Data Models) ---
 
@@ -120,7 +125,41 @@ async def optimize_route(request: RouteRequest):
 
         # 3. 构造返回结果
         optimized_place_ids = [request.places_to_visit[i].place_id for i in optimized_indices]
-        dropped_place_ids = [request.places_to_visit[i].place_id for i in unvisited] # 没被访问的点就是被砍掉的
+        dropped_place_ids = [request.places_to_visit[i].place_id for i in unvisited] # 没被访问的点就是被砍掉的\
+
+        # ... 前面的计算逻辑保持不变 ...
+
+        # --- 【新增：保存到数据库】 ---
+        db = SessionLocal()
+        try:
+            # 1. 创建行程记录
+            new_trip = models.DBTrip(
+                trip_id=request.trip_info.trip_id,
+                user_id=request.trip_info.user_id,
+                title=request.trip_info.title,
+                total_available_time=request.trip_info.total_available_time,
+                created_at=request.trip_info.created_at
+            )
+            db.add(new_trip)
+            
+            # 2. 创建关联的地点记录
+            for p in request.places_to_visit:
+                new_place = models.DBPlace(
+                    place_id=p.place_id,
+                    name=p.name,
+                    latitude=p.latitude,
+                    longitude=p.longitude,
+                    visit_duration_minutes=p.visit_duration_minutes,
+                    trip_id=request.trip_info.trip_id # 建立外键关联
+                )
+                db.add(new_place)
+            
+            db.commit() # 真正写入 navia.db 文件
+        except Exception as db_err:
+            db.rollback() # 出错就回滚，保证数据不乱
+            print(f"Database Error: {db_err}")
+        finally:
+            db.close() # 必须关闭连接，否则数据库会被锁死
 
         return RouteResponse(
             route_id="route_optimized_v3",
@@ -138,4 +177,4 @@ async def optimize_route(request: RouteRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000) 
