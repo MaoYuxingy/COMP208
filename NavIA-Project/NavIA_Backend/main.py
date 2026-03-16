@@ -5,6 +5,7 @@ from datetime import datetime
 import googlemaps
 import os
 from dotenv import load_dotenv
+from auth_routes import router as auth_router
 
 # 1. 加载环境变量并初始化 Google Maps 客户端
 load_dotenv()
@@ -15,6 +16,7 @@ app = FastAPI(
     description="旅游路线规划与优化后端服务",
     version="1.0.0"
 )
+app.include_router(auth_router)
 
 # --- 数据模型 (Data Models) ---
 
