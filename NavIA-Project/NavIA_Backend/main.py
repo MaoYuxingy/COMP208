@@ -18,6 +18,7 @@ app = FastAPI(
     description="旅游路线规划与优化后端服务",
     version="1.0.0"
 )
+app.include_router(auth_router)
 
 # --- 关键：在这里插入数据库初始化代码 ---
 models.Base.metadata.create_all(bind=engine)
