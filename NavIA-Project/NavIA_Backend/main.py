@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 from database import engine, SessionLocal
 import models
+from auth_routes import router as auth_router
 
 # 1. 加载环境变量并初始化 Google Maps 客户端
 load_dotenv()
