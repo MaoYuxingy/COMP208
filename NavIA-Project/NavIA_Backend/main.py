@@ -9,7 +9,7 @@ from database import engine, SessionLocal
 import models
 from auth_routes import router as auth_router
 
-# 1. 加载环境变量并初始化 Google Maps 客户端
+# 1. 加载环境变量并初始化
 load_dotenv()
 gmaps = googlemaps.Client(key=os.getenv("GOOGLE_MAPS_API_KEY"), timeout=10)
 
@@ -23,7 +23,7 @@ app.include_router(auth_router)
 # --- 关键：在这里插入数据库初始化代码 ---
 models.Base.metadata.create_all(bind=engine)
 
-# --- 数据模型 (Data Models) ---
+# --- 数据模型 ---
 
 class Place(BaseModel):
     place_id: str
@@ -31,13 +31,13 @@ class Place(BaseModel):
     latitude: float
     longitude: float
     cached: bool = False
-    visit_duration_minutes: int = 60  # 【V3 新增】默认每个景点逛 1 小时
+    visit_duration_minutes: int = 60
 
 class TripInfo(BaseModel):
     trip_id: str
     user_id: str
     title: str
-    total_available_time: int  # 【V3 核心】用户总可用时间（分钟）
+    total_available_time: int
     created_at: datetime
 
 class RouteRequest(BaseModel):
@@ -50,13 +50,13 @@ class RouteResponse(BaseModel):
     total_distance_km: float
     total_time_minutes: int
     optimized_order: List[str]
-    dropped_places: List[str]  # 【V3 新增】告诉前端哪些景点因为时间不够被砍掉了
+    dropped_places: List[str]
 
-# --- 核心接口 (API Endpoints) ---
+# --- 核心接口 ---
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to NavIA API - Real-time Routing Enabled"}
+    return {"message": "Welcome to NavIA API - V4 Round-Trip Routing Enabled"}
 
 @app.post("/api/v1/optimize-route", response_model=RouteResponse, tags=["Routing"])
 async def optimize_route(request: RouteRequest):
@@ -71,61 +71,76 @@ async def optimize_route(request: RouteRequest):
         )
 
     try:
-        # 1. 获取所有点之间的距离矩阵
+        # 1. 获取距离矩阵
         locations = [f"{p.latitude},{p.longitude}" for p in request.places_to_visit]
         matrix = gmaps.distance_matrix(origins=locations, destinations=locations, mode='driving')
 
         if not matrix or not matrix.get('rows'):
-            raise ValueError("Google Maps 返回了空数据或无法计算路况")
+            raise ValueError("Google Maps 返回了空数据")
 
-        # 2. 贪心算法 + 时间背包 (V3)
+        # 2. V4 闭环贪心算法
         unvisited = list(range(len(request.places_to_visit)))
         optimized_indices = []
         
-        # 强制起点（比如酒店），起点通常不算游玩时间
-        current_idx = unvisited.pop(0)
-        optimized_indices.append(current_idx)
+        # 记录起点 (如：酒店)，并移出未访问列表
+        start_idx = unvisited.pop(0)
+        current_idx = start_idx
+        optimized_indices.append(start_idx)
 
         total_dist_meters = 0
         total_time_seconds = 0
-        
-        # 获取用户的总时间预算 (转换为秒)
         time_budget_seconds = request.trip_info.total_available_time * 60
 
         while unvisited:
             nearest_neighbor = -1
             min_dist = float('inf')
-            temp_time = 0
-
-            # 找最近的邻居
+            temp_time_to_next = 0
+            
             for next_idx in unvisited:
-                element = matrix['rows'][current_idx]['elements'][next_idx]
-                if element['status'] == 'OK':
-                    dist = element['distance']['value']
-                    if dist < min_dist:
-                        min_dist = dist
+                # 获取从当前点去下一站的数据
+                element_to = matrix['rows'][current_idx]['elements'][next_idx]
+                # 获取从下一站直接回酒店的数据
+                element_return = matrix['rows'][next_idx]['elements'][start_idx]
+                
+                if element_to['status'] == 'OK' and element_return['status'] == 'OK':
+                    dist_to = element_to['distance']['value']
+                    time_to = element_to['duration']['value']
+                    time_return = element_return['duration']['value']
+                    
+                    visit_time = request.places_to_visit[next_idx].visit_duration_minutes * 60
+                    
+                    # 【V4 核心】：预测总耗时 = 已用时间 + 去下一站车程 + 下一站游玩 + 从下一站回酒店的车程
+                    predicted_time = total_time_seconds + time_to + visit_time + time_return
+                    
+                    # 只有在总预算范围内，且距离最短的，才是我们的目标
+                    if predicted_time <= time_budget_seconds and dist_to < min_dist:
+                        min_dist = dist_to
                         nearest_neighbor = next_idx
-                        temp_time = element['duration']['value']
+                        temp_time_to_next = time_to
 
+            # 如果找不到符合条件的点（时间不够了，或者路不通），必须结束寻找
             if nearest_neighbor == -1:
                 break
             
-            # 【核心校验】如果去下一个点，时间够不够？
-            visit_time_seconds = request.places_to_visit[nearest_neighbor].visit_duration_minutes * 60
-            predicted_time = total_time_seconds + temp_time + visit_time_seconds
-            
-            if predicted_time > time_budget_seconds:
-                # 时间不够了！停止规划，剩下的点全部放弃
-                break 
-            
-            # 时间充足，加入行程
+            # 正式加入行程
+            visit_time = request.places_to_visit[nearest_neighbor].visit_duration_minutes * 60
             total_dist_meters += min_dist
-            total_time_seconds += (temp_time + visit_time_seconds)
+            total_time_seconds += (temp_time_to_next + visit_time)
             current_idx = nearest_neighbor
             unvisited.remove(nearest_neighbor)
             optimized_indices.append(nearest_neighbor)
 
-        # 3. 构造返回结果
+        # 3. 闭环：添加最后一段回酒店的行程
+        if current_idx != start_idx:
+            final_leg = matrix['rows'][current_idx]['elements'][start_idx]
+            if final_leg['status'] == 'OK':
+                total_dist_meters += final_leg['distance']['value']
+                total_time_seconds += final_leg['duration']['value']
+            
+            # 将起点再次追加到路线末尾，形成完美闭环
+            optimized_indices.append(start_idx)
+
+        # 构造结果
         optimized_place_ids = [request.places_to_visit[i].place_id for i in optimized_indices]
         dropped_place_ids = [request.places_to_visit[i].place_id for i in unvisited] # 没被访问的点就是被砍掉的\
 
@@ -164,12 +179,12 @@ async def optimize_route(request: RouteRequest):
             db.close() # 必须关闭连接，否则数据库会被锁死
 
         return RouteResponse(
-            route_id="route_optimized_v3",
-            status="SUCCESS_WITH_TIME_LIMIT",
+            route_id="route_optimized_v4_closed_loop",
+            status="SUCCESS_ROUND_TRIP",
             total_distance_km=round(total_dist_meters / 1000.0, 2),
             total_time_minutes=total_time_seconds // 60,
             optimized_order=optimized_place_ids,
-            dropped_places=dropped_place_ids # 返回被砍掉的景点
+            dropped_places=dropped_place_ids
         )
 
     except googlemaps.exceptions.ApiError as e:
