@@ -18,7 +18,7 @@ gmaps = googlemaps.Client(key=os.getenv("GOOGLE_MAPS_API_KEY"), timeout=10)
 # 2. 初始化 FastAPI 应用
 app = FastAPI(
     title="NavIA Backend API",
-    description="旅游路线规划与优化后端服务 (V5 Time Windows)",
+    description="旅游路线规划与优化后端服务 (V5 Time Windows + Polyline 轨迹)",
     version="1.0.0"
 )
 
@@ -46,7 +46,6 @@ class Place(BaseModel):
     longitude: float
     cached: bool = False
     visit_duration_minutes: int = 60
-    # V5 新增：营业时间（绝对分钟数，默认 0 即 00:00，1440 即 24:00）
     open_time: int = 0
     close_time: int = 1440
 
@@ -54,7 +53,6 @@ class TripInfo(BaseModel):
     trip_id: str
     user_id: str
     title: str
-    # V5 新增：早上从酒店出发的时间（绝对分钟数，比如 8:00 AM 就是 480）
     start_time: int = 480 
     total_available_time: int
     created_at: datetime
@@ -70,6 +68,8 @@ class RouteResponse(BaseModel):
     total_time_minutes: int
     optimized_order: List[str]
     dropped_places: List[str]
+    # --- 新增：用于前端绘制真实街道轨迹的编码字符串列表 ---
+    polylines: List[str] = []
 
 # ==========================================
 # 核心业务接口：V5 路线规划与闭环优化
@@ -80,19 +80,17 @@ def optimize_route(request: RouteRequest):
     if not request.places_to_visit or len(request.places_to_visit) < 2:
         raise HTTPException(status_code=400, detail="至少需要提供两个地点（包括起点）")
 
-    # 提取经纬度用于调用 Google Maps API
     locations = [(p.latitude, p.longitude) for p in request.places_to_visit]
     
     try:
         # 调用 Google Maps 距离矩阵 API
         matrix = gmaps.distance_matrix(locations, locations, mode="driving")
         
-        # --- V5 初始化绝对时间轴 (全转为秒，方便计算) ---
         start_time_sec = request.trip_info.start_time * 60
         current_time_sec = start_time_sec
         end_time_sec = current_time_sec + (request.trip_info.total_available_time * 60)
         
-        start_idx = 0  # 默认列表第一个元素为起点（酒店）
+        start_idx = 0 
         current_idx = start_idx
         unvisited = list(range(1, len(request.places_to_visit)))
         
@@ -121,24 +119,16 @@ def optimize_route(request: RouteRequest):
                     open_time_sec = request.places_to_visit[next_idx].open_time * 60
                     close_time_sec = request.places_to_visit[next_idx].close_time * 60
                     
-                    # 1. 推算到达时间
                     arrival_time = current_time_sec + time_to
-                    
-                    # 2. 计算在门外的等待时间
                     wait_time = max(0, open_time_sec - arrival_time)
-                    
-                    # 3. 实际开始游玩时间
                     actual_start_time = arrival_time + wait_time
                     
-                    # 【硬约束 1】：关门剪枝
                     if actual_start_time + visit_time > close_time_sec:
                         continue
                         
-                    # 【硬约束 2】：闭环超时剪枝
                     if actual_start_time + visit_time + time_return > end_time_sec:
                         continue
                         
-                    # 综合代价计算: 距离 + 等待时间的双重惩罚
                     cost = dist_to + (wait_time * 2) 
                     
                     if cost < min_cost:
@@ -148,11 +138,9 @@ def optimize_route(request: RouteRequest):
                         temp_wait_time = wait_time
                         temp_dist_to_next = dist_to
 
-            # 如果没有符合条件的景点，结束今天的行程
             if nearest_neighbor == -1:
                 break
             
-            # 正式将该景点加入行程
             visit_time = request.places_to_visit[nearest_neighbor].visit_duration_minutes * 60
             current_time_sec += (temp_time_to_next + temp_wait_time + visit_time)
             total_dist_meters += temp_dist_to_next
@@ -168,17 +156,15 @@ def optimize_route(request: RouteRequest):
             current_time_sec += element_return_final['duration']['value']
             optimized_indices.append(start_idx)
 
-        # 统计舍弃的景点
         dropped_indices = unvisited
         optimized_place_ids = [request.places_to_visit[i].place_id for i in optimized_indices]
         dropped_place_ids = [request.places_to_visit[i].place_id for i in dropped_indices]
 
         # ==========================================
-        # 将生成的路线持久化到数据库
+        # 数据库持久化逻辑
         # ==========================================
         db = SessionLocal()
         try:
-            # 1. 创建 Trip 记录
             new_trip = models.DBTrip(
                 trip_id=request.trip_info.trip_id,
                 user_id=request.trip_info.user_id,
@@ -188,7 +174,6 @@ def optimize_route(request: RouteRequest):
             )
             db.add(new_trip)
             
-            # 2. 创建关联的 Place 记录 (仅保存去成的景点)
             for place_id in optimized_place_ids:
                 p = next((item for item in request.places_to_visit if item.place_id == place_id), None)
                 if p:
@@ -201,7 +186,6 @@ def optimize_route(request: RouteRequest):
                         trip_id=request.trip_info.trip_id
                     )
                     db.add(new_place)
-            
             db.commit()
         except Exception as db_err:
             db.rollback()
@@ -209,19 +193,39 @@ def optimize_route(request: RouteRequest):
         finally:
             db.close()
 
-        # 计算总耗时 (修复了缺少 60 的语法错误)
+        # ==========================================
+        # 视觉优化：获取真实街道 Polyline 轨迹
+        # ==========================================
+        polylines = []
+        try:
+            # 获取已排序地点的经纬度
+            ordered_locations = []
+            for pid in optimized_place_ids:
+                p = next(item for item in request.places_to_visit if item.place_id == pid)
+                ordered_locations.append((p.latitude, p.longitude))
+            
+            # 依次请求 A->B, B->C 的详细轨迹
+            for i in range(len(ordered_locations) - 1):
+                origin = ordered_locations[i]
+                destination = ordered_locations[i+1]
+                directions_result = gmaps.directions(origin, destination, mode="driving")
+                if directions_result:
+                    encoded_polyline = directions_result[0]['overview_polyline']['points']
+                    polylines.append(encoded_polyline)
+        except Exception as poly_err:
+            print(f"获取 Polyline 失败，已降级: {poly_err}")
+
         total_time_minutes = (current_time_sec - start_time_sec) // 60
 
-        # 返回最终结果 (修复了之前缩进不对导致被判定在 try 外面的错误)
         return RouteResponse(
             route_id="route_optimized_v5_time_windows",
             status="SUCCESS_ROUND_TRIP_WITH_TIME_WINDOWS",
             total_distance_km=round(total_dist_meters / 1000.0, 2),
             total_time_minutes=total_time_minutes,
             optimized_order=optimized_place_ids,
-            dropped_places=dropped_place_ids
+            dropped_places=dropped_place_ids,
+            polylines=polylines  # 返回给前端画线
         )
 
-    # 捕获 Google Maps API 异常 (修复了之前的缩进丢失问题)
     except googlemaps.exceptions.ApiError as e:
         raise HTTPException(status_code=500, detail=f"Google Maps API 错误: {str(e)}")
