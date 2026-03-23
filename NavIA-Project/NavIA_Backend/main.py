@@ -9,6 +9,8 @@ from database import engine, SessionLocal
 import models
 from auth_routes import router as auth_router
 
+
+
 # 1. 加载环境变量并初始化 Google Maps 客户端
 load_dotenv()
 gmaps = googlemaps.Client(key=os.getenv("GOOGLE_MAPS_API_KEY"), timeout=10)
@@ -180,3 +182,29 @@ async def optimize_route(request: RouteRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000) 
+
+
+from fastapi import Depends, HTTPException
+from sqlalchemy.orm import Session
+from database import SessionLocal  # 注意这里：我们改为导入 SessionLocal
+
+# 1. 自己造一个“水管工”函数，负责开关数据库
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# 2. 你的历史行程查询接口
+@app.get("/api/v1/trips/{trip_id}")
+def get_trip_history(trip_id: str, db: Session = Depends(get_db)):
+    # 去数据库里查对应的行程
+    trip = db.query(models.DBTrip).filter(models.DBTrip.trip_id == trip_id).first()
+    
+    # 如果查不到，返回 404 报错
+    if not trip:
+        raise HTTPException(status_code=404, detail="找不到该行程数据")
+        
+    # 查到了直接返回
+    return trip
