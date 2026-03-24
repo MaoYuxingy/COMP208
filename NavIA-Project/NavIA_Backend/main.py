@@ -1,14 +1,26 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import googlemaps
 import os
+import hashlib
+import hmac
+import secrets
+import sqlite3
+import uuid
+from pathlib import Path
 from dotenv import load_dotenv
 
 # 1. 加载环境变量并初始化 Google Maps 客户端
 load_dotenv()
-gmaps = googlemaps.Client(key=os.getenv("GOOGLE_MAPS_API_KEY"), timeout=10)
+BASE_DIR = Path(__file__).resolve().parent
+DATABASE_PATH = BASE_DIR / "navia.db"
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+gmaps = googlemaps.Client(key=GOOGLE_MAPS_API_KEY, timeout=10) if GOOGLE_MAPS_API_KEY else None
+DEV_TEST_EMAIL = os.getenv("NAVIA_DEV_USER_EMAIL", "test@navia.app")
+DEV_TEST_PASSWORD = os.getenv("NAVIA_DEV_USER_PASSWORD", "NavIA123!")
+DEV_TEST_DISPLAY_NAME = os.getenv("NAVIA_DEV_USER_DISPLAY_NAME", "NavIA Test User")
 
 app = FastAPI(
     title="NavIA Backend API",
@@ -17,6 +29,25 @@ app = FastAPI(
 )
 
 # --- 数据模型 (Data Models) ---
+
+class AuthUser(BaseModel):
+    user_id: str
+    email: str
+    display_name: Optional[str] = None
+    created_at: datetime
+
+class AuthResponse(BaseModel):
+    session_token: str
+    user: AuthUser
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
 class Place(BaseModel):
     place_id: str
@@ -45,11 +76,199 @@ class RouteResponse(BaseModel):
     optimized_order: List[str]
     dropped_places: List[str]  # 【V3 新增】告诉前端哪些景点因为时间不够被砍掉了
 
+
+def init_auth_db():
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            display_name TEXT,
+            password_salt TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def ensure_dev_test_user():
+    email = normalize_email(DEV_TEST_EMAIL)
+    password = DEV_TEST_PASSWORD
+    display_name = DEV_TEST_DISPLAY_NAME
+
+    try:
+        validate_credentials(email, password)
+    except HTTPException as error:
+        raise RuntimeError(f"Invalid development test user configuration: {error.detail}") from error
+
+    conn = get_db_connection()
+    existing_user = conn.execute(
+        "SELECT user_id, created_at FROM users WHERE email = ?",
+        (email,)
+    ).fetchone()
+
+    password_salt, password_hash = hash_password(password)
+
+    if existing_user:
+        conn.execute(
+            """
+            UPDATE users
+            SET display_name = ?, password_salt = ?, password_hash = ?
+            WHERE user_id = ?
+            """,
+            (
+                display_name,
+                password_salt,
+                password_hash,
+                existing_user["user_id"]
+            )
+        )
+    else:
+        created_at = datetime.now(timezone.utc).isoformat()
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        conn.execute(
+            """
+            INSERT INTO users (user_id, email, display_name, password_salt, password_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                email,
+                display_name,
+                password_salt,
+                password_hash,
+                created_at
+            )
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def get_db_connection():
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def validate_credentials(email: str, password: str):
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(status_code=400, detail="请输入有效的邮箱地址")
+
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="密码至少需要 8 位")
+
+
+def hash_password(password: str, salt: Optional[str] = None):
+    salt = salt or secrets.token_hex(16)
+    derived_key = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        100_000
+    ).hex()
+    return salt, derived_key
+
+
+def verify_password(password: str, salt: str, expected_hash: str) -> bool:
+    _, computed_hash = hash_password(password, salt)
+    return hmac.compare_digest(computed_hash, expected_hash)
+
+
+def make_auth_response(row: sqlite3.Row) -> AuthResponse:
+    return AuthResponse(
+        session_token=f"session_{uuid.uuid4().hex}",
+        user=AuthUser(
+            user_id=row["user_id"],
+            email=row["email"],
+            display_name=row["display_name"],
+            created_at=datetime.fromisoformat(row["created_at"])
+        )
+    )
+
+
+init_auth_db()
+ensure_dev_test_user()
+
 # --- 核心接口 (API Endpoints) ---
 
 @app.get("/")
 async def root():
     return {"message": "Welcome to NavIA API - Real-time Routing Enabled"}
+
+
+@app.post("/api/v1/auth/register", response_model=AuthResponse, tags=["Auth"])
+async def register(request: RegisterRequest):
+    email = normalize_email(request.email)
+    validate_credentials(email, request.password)
+
+    conn = get_db_connection()
+    existing_user = conn.execute(
+        "SELECT user_id FROM users WHERE email = ?",
+        (email,)
+    ).fetchone()
+
+    if existing_user:
+        conn.close()
+        raise HTTPException(status_code=409, detail="该邮箱已被注册")
+
+    created_at = datetime.now(timezone.utc).isoformat()
+    password_salt, password_hash = hash_password(request.password)
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+
+    conn.execute(
+        """
+        INSERT INTO users (user_id, email, display_name, password_salt, password_hash, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            email,
+            request.display_name,
+            password_salt,
+            password_hash,
+            created_at
+        )
+    )
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT user_id, email, display_name, created_at FROM users WHERE user_id = ?",
+        (user_id,)
+    ).fetchone()
+    conn.close()
+
+    return make_auth_response(row)
+
+
+@app.post("/api/v1/auth/login", response_model=AuthResponse, tags=["Auth"])
+async def login(request: LoginRequest):
+    email = normalize_email(request.email)
+    validate_credentials(email, request.password)
+
+    conn = get_db_connection()
+    row = conn.execute(
+        """
+        SELECT user_id, email, display_name, created_at, password_salt, password_hash
+        FROM users
+        WHERE email = ?
+        """,
+        (email,)
+    ).fetchone()
+    conn.close()
+
+    if not row or not verify_password(request.password, row["password_salt"], row["password_hash"]):
+        raise HTTPException(status_code=401, detail="邮箱或密码错误")
+
+    return make_auth_response(row)
 
 @app.post("/api/v1/optimize-route", response_model=RouteResponse, tags=["Routing"])
 async def optimize_route(request: RouteRequest):
@@ -64,6 +283,9 @@ async def optimize_route(request: RouteRequest):
         )
 
     try:
+        if gmaps is None:
+            raise HTTPException(status_code=503, detail="Google Maps API Key 尚未配置")
+
         # 1. 获取所有点之间的距离矩阵
         locations = [f"{p.latitude},{p.longitude}" for p in request.places_to_visit]
         matrix = gmaps.distance_matrix(origins=locations, destinations=locations, mode='driving')
@@ -133,6 +355,8 @@ async def optimize_route(request: RouteRequest):
 
     except googlemaps.exceptions.ApiError as e:
         raise HTTPException(status_code=403, detail=f"地图服务授权失败: {str(e)}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"路径规划暂时不可用: {str(e)}")
 

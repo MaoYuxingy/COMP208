@@ -7,47 +7,146 @@
 
 import Foundation
 
-final class APIService {
-    
+protocol RouteOptimizing {
+    func optimizeRoute(request: RouteRequest, completion: @escaping (Result<RouteResponse, Error>) -> Void)
+}
+
+protocol TripHistoryFetching {
+    func fetchTripHistory(tripID: String, completion: @escaping (Result<TripHistoryRecord, Error>) -> Void)
+}
+
+enum APIError: LocalizedError {
+    case invalidURL
+    case invalidResponse
+    case server(statusCode: Int, message: String?)
+    case encoding(Error)
+    case decoding(Error)
+    case network(Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "The API URL is invalid."
+        case .invalidResponse:
+            return "The server returned an invalid response."
+        case .server(let statusCode, let message):
+            if let message, !message.isEmpty {
+                return "Server error (\(statusCode)): \(message)"
+            }
+            return "Server error (\(statusCode))."
+        case .encoding:
+            return "Failed to encode the request body."
+        case .decoding:
+            return "Failed to decode the server response."
+        case .network(let error):
+            return error.localizedDescription
+        }
+    }
+}
+
+struct APIErrorPayload: Decodable {
+    let detail: String?
+}
+
+final class APIService: RouteOptimizing, TripHistoryFetching {
     static let shared = APIService()
-    
-    private init() {}
-    
-    private let baseURL = "http://127.0.0.1:8001"
-    
+
+    private let baseURL: URL
+    private let session: URLSession
+    private let sessionStore: UserSessionStore
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+
+    init(
+        baseURL: URL = AppEnvironment.apiBaseURL,
+        session: URLSession = .shared,
+        sessionStore: UserSessionStore = .shared
+    ) {
+        self.baseURL = baseURL
+        self.session = session
+        self.sessionStore = sessionStore
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        self.encoder = encoder
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        self.decoder = decoder
+    }
+
     func optimizeRoute(request: RouteRequest, completion: @escaping (Result<RouteResponse, Error>) -> Void) {
-        guard let url = URL(string: "\(baseURL)/api/v1/optimize-route") else {
-            completion(.failure(NSError(domain: "Invalid URL", code: -1)))
-            return
-        }
-        
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "POST"
+        var urlRequest = makeRequest(path: "api/v1/optimize-route", method: "POST")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         do {
-            urlRequest.httpBody = try JSONEncoder().encode(request)
+            urlRequest.httpBody = try encoder.encode(request)
         } catch {
-            completion(.failure(error))
+            completion(.failure(APIError.encoding(error)))
             return
         }
-        
-        URLSession.shared.dataTask(with: urlRequest) { data, response, error in
+
+        performRequest(urlRequest, completion: completion)
+    }
+
+    func fetchTripHistory(tripID: String, completion: @escaping (Result<TripHistoryRecord, Error>) -> Void) {
+        let urlRequest = makeRequest(path: "api/v1/trips/\(tripID)", method: "GET")
+        performRequest(urlRequest, completion: completion)
+    }
+
+    private func makeRequest(path: String, method: String) -> URLRequest {
+        let url = baseURL.appendingPathComponent(path)
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        if let authorizationHeader = sessionStore.currentSession?.authorizationHeaderValue {
+            urlRequest.setValue(authorizationHeader, forHTTPHeaderField: "Authorization")
+        }
+
+        return urlRequest
+    }
+
+    private func performRequest<Response: Decodable>(
+        _ request: URLRequest,
+        completion: @escaping (Result<Response, Error>) -> Void
+    ) {
+        session.dataTask(with: request) { [decoder] data, response, error in
             if let error = error {
-                completion(.failure(error))
+                Task { @MainActor in
+                    completion(.failure(APIError.network(error)))
+                }
                 return
             }
-            
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                Task { @MainActor in
+                    completion(.failure(APIError.invalidResponse))
+                }
+                return
+            }
+
             guard let data = data else {
-                completion(.failure(NSError(domain: "No Data", code: -2)))
+                Task { @MainActor in
+                    completion(.failure(APIError.invalidResponse))
+                }
                 return
             }
-            
-            do {
-                let result = try JSONDecoder().decode(RouteResponse.self, from: data)
-                completion(.success(result))
-            } catch {
-                completion(.failure(error))
+
+            let statusCode = httpResponse.statusCode
+            Task { @MainActor in
+                guard (200 ..< 300).contains(statusCode) else {
+                    let payload = try? decoder.decode(APIErrorPayload.self, from: data)
+                    completion(.failure(APIError.server(statusCode: statusCode, message: payload?.detail)))
+                    return
+                }
+
+                do {
+                    let result = try decoder.decode(Response.self, from: data)
+                    completion(.success(result))
+                } catch {
+                    completion(.failure(APIError.decoding(error)))
+                }
             }
         }.resume()
     }
