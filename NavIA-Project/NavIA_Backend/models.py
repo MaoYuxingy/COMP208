@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from database import Base
 import datetime
@@ -25,8 +25,13 @@ class DBPlace(Base):
     latitude = Column(Float)
     longitude = Column(Float)
     visit_duration_minutes = Column(Integer)
-    
-    # 外键：关联到 trips 表的 trip_id
+
+    visit_order = Column(Integer, nullable=True)
+    arrival_time = Column(String, nullable=True)
+    wait_time = Column(Integer, nullable=True, default=0)
+    departure_time = Column(String, nullable=True)
+    dropped = Column(Boolean, default=False)
+
     trip_id = Column(String, ForeignKey("trips.trip_id"))
 
     trip = relationship("DBTrip", back_populates="places")
