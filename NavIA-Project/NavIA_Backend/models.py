@@ -13,6 +13,7 @@ class DBUser(Base):
     display_name = Column(String, nullable=False)
     password_hash = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
 class DBTrip(Base):
