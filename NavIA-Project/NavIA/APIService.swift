@@ -13,6 +13,7 @@ protocol RouteOptimizing {
 
 protocol TripHistoryFetching {
     func fetchTripHistory(tripID: String, completion: @escaping (Result<TripHistoryRecord, Error>) -> Void)
+    func fetchTripHistoryList(userID: String, completion: @escaping (Result<[TripHistorySummary], Error>) -> Void)
 }
 
 enum APIError: LocalizedError {
@@ -92,6 +93,19 @@ final class APIService: RouteOptimizing, TripHistoryFetching {
     func fetchTripHistory(tripID: String, completion: @escaping (Result<TripHistoryRecord, Error>) -> Void) {
         let urlRequest = makeRequest(path: "api/v1/trips/\(tripID)", method: "GET")
         performRequest(urlRequest, completion: completion)
+    }
+
+    func fetchTripHistoryList(userID: String, completion: @escaping (Result<[TripHistorySummary], Error>) -> Void) {
+        let urlRequest = makeRequest(path: "api/v1/users/\(userID)/trips", method: "GET")
+
+        performRequest(urlRequest) { (result: Result<TripHistoryListResponse, Error>) in
+            switch result {
+            case .success(let response):
+                completion(.success(response.trips))
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
     }
 
     private func makeRequest(path: String, method: String) -> URLRequest {

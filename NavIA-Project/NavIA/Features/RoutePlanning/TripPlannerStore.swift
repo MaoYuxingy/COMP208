@@ -25,6 +25,7 @@ final class TripPlannerStore {
         let latestRoute: RouteResponse?
         let latestOptimizedTripID: String?
         let latestTripHistory: TripHistoryRecord?
+        let tripHistorySummaries: [TripHistorySummary]
 
         var canOptimize: Bool {
             selectedPlaces.count >= 2
@@ -44,6 +45,7 @@ final class TripPlannerStore {
     private(set) var latestRoute: RouteResponse?
     private(set) var latestOptimizedTripID: String?
     private(set) var latestTripHistory: TripHistoryRecord?
+    private(set) var tripHistorySummaries: [TripHistorySummary]
 
     init(
         tripInfo: TripInfo = .sampleLiverpoolTrip,
@@ -59,6 +61,7 @@ final class TripPlannerStore {
         self.latestRoute = nil
         self.latestOptimizedTripID = defaults.string(forKey: latestTripDefaultsKey)
         self.latestTripHistory = nil
+        self.tripHistorySummaries = []
     }
 
     var snapshot: Snapshot {
@@ -70,7 +73,8 @@ final class TripPlannerStore {
             selectedPlace: selectedPlace,
             latestRoute: latestRoute,
             latestOptimizedTripID: latestOptimizedTripID,
-            latestTripHistory: latestTripHistory
+            latestTripHistory: latestTripHistory,
+            tripHistorySummaries: tripHistorySummaries
         )
     }
 
@@ -161,6 +165,17 @@ final class TripPlannerStore {
         latestTripHistory = tripHistory
         latestOptimizedTripID = tripHistory.tripID
         defaults.set(tripHistory.tripID, forKey: latestTripDefaultsKey)
+        notifyChange()
+    }
+
+    func storeTripHistorySummaries(_ tripHistorySummaries: [TripHistorySummary]) {
+        self.tripHistorySummaries = tripHistorySummaries
+
+        if let latestTripID = tripHistorySummaries.first?.tripID {
+            latestOptimizedTripID = latestTripID
+            defaults.set(latestTripID, forKey: latestTripDefaultsKey)
+        }
+
         notifyChange()
     }
 

@@ -14,6 +14,18 @@ protocol Authenticating {
 final class AuthService: Authenticating {
     static let shared = AuthService()
 
+    private struct RegisterPayload: Encodable {
+        let email: String
+        let displayName: String
+        let password: String
+
+        enum CodingKeys: String, CodingKey {
+            case email
+            case displayName = "display_name"
+            case password
+        }
+    }
+
     private let baseURL: URL
     private let session: URLSession
     private let encoder: JSONEncoder
@@ -36,9 +48,19 @@ final class AuthService: Authenticating {
     }
 
     func signUp(request: SignUpRequest, completion: @escaping (Result<AuthSession, Error>) -> Void) {
+        let trimmedEmail = request.email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackDisplayName = trimmedEmail.split(separator: "@").first.map(String.init) ?? "NavIA User"
+        let resolvedDisplayName = request.displayName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty ?? fallbackDisplayName
+
         performAuthRequest(
             path: "api/v1/auth/register",
-            request: request,
+            request: RegisterPayload(
+                email: trimmedEmail,
+                displayName: resolvedDisplayName,
+                password: request.password
+            ),
             completion: completion
         )
     }
@@ -116,5 +138,11 @@ final class AuthService: Authenticating {
                 }
             }
         }.resume()
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
     }
 }

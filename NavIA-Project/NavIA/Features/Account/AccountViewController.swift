@@ -64,11 +64,33 @@ final class AccountViewController: UIViewController {
         titleLabel?.text = "Account"
 
         if let latestTripHistory = snapshot.latestTripHistory {
-            detailsLabel.text = [
+            var lines = [
                 "Email: \(email)",
                 "Latest trip: \(latestTripHistory.displayTitle)",
                 "Trip ID: \(latestTripHistory.tripID)",
                 "Places saved: \(latestTripHistory.places.count)"
+            ]
+
+            if !snapshot.tripHistorySummaries.isEmpty {
+                lines.append("Trips in history: \(snapshot.tripHistorySummaries.count)")
+            }
+
+            if let startTime = latestTripHistory.startTime {
+                lines.append("Start time: \(startTime) min")
+            }
+
+            if let totalAvailableTime = latestTripHistory.totalAvailableTime {
+                lines.append("Available time: \(totalAvailableTime) min")
+            }
+
+            detailsLabel.text = lines.joined(separator: "\n")
+        } else if let latestSummary = snapshot.tripHistorySummaries.first {
+            detailsLabel.text = [
+                "Email: \(email)",
+                "Latest trip: \(latestSummary.title ?? latestSummary.tripID)",
+                "Trip ID: \(latestSummary.tripID)",
+                "Trips in history: \(snapshot.tripHistorySummaries.count)",
+                "Tap Refresh History to load the trip details."
             ].joined(separator: "\n")
         } else if let latestTripID = snapshot.latestOptimizedTripID {
             detailsLabel.text = [
@@ -86,11 +108,46 @@ final class AccountViewController: UIViewController {
     }
 
     @objc private func refreshHistoryTapped() {
-        guard let tripID = container.tripPlannerStore.snapshot.latestOptimizedTripID else {
-            presentSimpleAlert(title: "No Trip Yet", message: "Optimize a route first so there is a trip ID to fetch.")
+        guard let currentUser = container.sessionStore.currentSession?.user else {
+            presentSimpleAlert(title: "Not Signed In", message: "Sign in before loading trip history.")
             return
         }
 
+        detailsLabel.text = "Loading trip history for \(currentUser.email)..."
+
+        container.tripHistoryService.fetchTripHistoryList(userID: currentUser.userID) { [weak self] result in
+            guard let self else { return }
+
+            switch result {
+            case .success(let tripSummaries):
+                self.container.tripPlannerStore.storeTripHistorySummaries(tripSummaries)
+
+                guard let latestTripID = tripSummaries.first?.tripID else {
+                    self.detailsLabel.text = [
+                        "Email: \(currentUser.email)",
+                        "No trip history found for this user yet."
+                    ].joined(separator: "\n")
+                    return
+                }
+
+                self.loadTripHistoryDetail(tripID: latestTripID)
+
+            case .failure(let error):
+                if let latestTripID = self.container.tripPlannerStore.snapshot.latestOptimizedTripID {
+                    self.loadTripHistoryDetail(tripID: latestTripID)
+                } else {
+                    self.detailsLabel.text = "Failed to load trip history.\n\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    @objc private func signOutTapped() {
+        container.sessionStore.clear()
+        AppNavigator.replaceRoot(using: view.window?.windowScene)
+    }
+
+    private func loadTripHistoryDetail(tripID: String) {
         detailsLabel.text = "Loading latest trip history for \(tripID)..."
 
         container.tripHistoryService.fetchTripHistory(tripID: tripID) { [weak self] result in
@@ -105,11 +162,6 @@ final class AccountViewController: UIViewController {
                 self.detailsLabel.text = "Failed to load trip history.\n\(error.localizedDescription)"
             }
         }
-    }
-
-    @objc private func signOutTapped() {
-        container.sessionStore.clear()
-        AppNavigator.replaceRoot(using: view.window?.windowScene)
     }
 
     private func applyLayout() {
