@@ -5,6 +5,7 @@
 //  Created by 万俟修杰 on 2026/3/6.
 //
 import Foundation
+import CoreLocation
 
 struct TripInfo: Codable, Equatable {
     let tripID: String
@@ -97,6 +98,10 @@ extension TripInfo {
 extension Place {
     static var sampleLiverpoolStops: [Place] {
         sampleStops(for: "Liverpool")
+    }
+
+    var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
     static func sampleStops(for destination: String) -> [Place] {

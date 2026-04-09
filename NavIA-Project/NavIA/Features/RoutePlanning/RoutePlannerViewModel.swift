@@ -10,6 +10,8 @@ final class RoutePlannerViewModel {
     struct ViewState {
         var isLoading = false
         var selectedPlacesCount = 0
+        var totalDistanceKm: Double?
+        var totalTimeMinutes: Int?
         var statusText = "Status: Add at least 2 places"
         var distanceText = "Distance: -"
         var timeText = "Time: -"
@@ -98,6 +100,8 @@ final class RoutePlannerViewModel {
             return
         }
 
+        state.totalDistanceKm = nil
+        state.totalTimeMinutes = nil
         state.distanceText = "Distance: -"
         state.timeText = "Time: -"
         state.optimizedPlaces = []
@@ -124,6 +128,8 @@ final class RoutePlannerViewModel {
     private func presentFailure(_ error: Error) {
         state.isLoading = false
         state.statusText = "Status: Failed"
+        state.totalDistanceKm = nil
+        state.totalTimeMinutes = nil
         state.distanceText = "Distance: -"
         state.timeText = "Time: -"
         state.optimizedPlaces = []
@@ -134,6 +140,8 @@ final class RoutePlannerViewModel {
 
     private func apply(response: RouteResponse) {
         state.statusText = "Status: \(response.status)"
+        state.totalDistanceKm = response.totalDistanceKm
+        state.totalTimeMinutes = response.totalTimeMinutes
         state.distanceText = "Distance: \(response.totalDistanceKm.formatted(.number.precision(.fractionLength(2)))) km"
         state.timeText = "Time: \(response.totalTimeMinutes) min"
         state.optimizedPlaces = response.optimizedOrder

@@ -4,6 +4,8 @@
 <dict>
 	<key>API_BASE_URL</key>
 	<string>http://127.0.0.1:8000</string>
+	<key>NSCameraUsageDescription</key>
+	<string>NavIA uses the camera to provide live navigation guidance overlays.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

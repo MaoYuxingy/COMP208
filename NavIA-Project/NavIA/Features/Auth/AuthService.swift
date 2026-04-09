@@ -49,7 +49,7 @@ final class AuthService: Authenticating {
 
     func signUp(request: SignUpRequest, completion: @escaping (Result<AuthSession, Error>) -> Void) {
         let trimmedEmail = request.email.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackDisplayName = trimmedEmail.split(separator: "@").first.map(String.init) ?? "NavIA User"
+        let fallbackDisplayName = trimmedEmail.isEmpty ? "NavIA User" : trimmedEmail
         let resolvedDisplayName = request.displayName?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nonEmpty ?? fallbackDisplayName

@@ -31,6 +31,14 @@ enum APIError: LocalizedError {
         case .invalidResponse:
             return "The server returned an invalid response."
         case .server(let statusCode, let message):
+            if statusCode == 503, let message, message.contains("Google Maps API Key") || message.contains("尚未配置") {
+                return "Route optimisation is unavailable because the backend Google Maps API key is not configured. Add GOOGLE_MAPS_API_KEY to NavIA_Backend/.env and restart the backend."
+            }
+
+            if statusCode == 403, let message, message.contains("地图服务授权失败") || message.lowercased().contains("api") {
+                return "Google Maps rejected the backend request. Check that GOOGLE_MAPS_API_KEY is valid and has the required Maps permissions enabled."
+            }
+
             if let message, !message.isEmpty {
                 return "Server error (\(statusCode)): \(message)"
             }
