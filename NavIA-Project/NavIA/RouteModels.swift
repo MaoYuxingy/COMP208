@@ -7,6 +7,10 @@
 import Foundation
 import CoreLocation
 
+enum RoutingPlaceIdentity {
+    nonisolated static let currentLocationPlaceID = "device-current-location"
+}
+
 struct TripInfo: Codable, Equatable {
     let tripID: String
     let userID: String
@@ -100,8 +104,25 @@ extension Place {
         sampleStops(for: "Liverpool")
     }
 
-    var coordinate: CLLocationCoordinate2D {
+    nonisolated var isCurrentLocationOrigin: Bool {
+        placeID == RoutingPlaceIdentity.currentLocationPlaceID
+    }
+
+    nonisolated var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
+    nonisolated static func currentLocationOrigin(from coordinate: CLLocationCoordinate2D) -> Place {
+        Place(
+            placeID: RoutingPlaceIdentity.currentLocationPlaceID,
+            name: "Current Location",
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            cached: true,
+            visitDurationMinutes: 0,
+            openTime: 0,
+            closeTime: 1440
+        )
     }
 
     static func sampleStops(for destination: String) -> [Place] {

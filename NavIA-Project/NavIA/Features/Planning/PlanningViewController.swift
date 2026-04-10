@@ -29,6 +29,15 @@ final class PlanningViewController: UIViewController, UITableViewDataSource {
 
         let userID = container.sessionStore.currentSession?.user.userID
         container.tripPlannerStore.loadSampleDataIfNeeded(userID: userID)
+        container.locationService.requestCurrentLocation { [weak self] result in
+            guard let self else { return }
+
+            DispatchQueue.main.async {
+                if case .success(let coordinate) = result {
+                    self.container.tripPlannerStore.updateCurrentLocation(coordinate)
+                }
+            }
+        }
         tableView?.reloadData()
     }
 
@@ -36,17 +45,32 @@ final class PlanningViewController: UIViewController, UITableViewDataSource {
         let userID = container.sessionStore.currentSession?.user.userID
         container.tripPlannerStore.loadSampleDataIfNeeded(userID: userID)
 
-        guard container.tripPlannerStore.snapshot.canOptimize else {
-            presentSimpleAlert(title: "Trip Not Ready", message: "Add at least two attractions before viewing the route.")
+        if container.tripPlannerStore.snapshot.canOptimize {
+            presentRouteFlow()
             return
         }
 
-        guard let navigationController = AppNavigator.makeTripFlowNavigationController(startingAt: "RouteViewController") else {
-            presentSimpleAlert(title: "Navigation Error", message: "Route screen could not be opened.")
-            return
-        }
+        container.locationService.requestCurrentLocation { [weak self] result in
+            guard let self else { return }
 
-        present(navigationController, animated: true)
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let coordinate):
+                    self.container.tripPlannerStore.updateCurrentLocation(coordinate)
+                case .failure:
+                    self.container.tripPlannerStore.updateCurrentLocation(nil)
+                }
+
+                let snapshot = self.container.tripPlannerStore.snapshot
+                guard snapshot.canOptimize else {
+                    let message = snapshot.optimizationRequirementText.replacingOccurrences(of: "Status: ", with: "")
+                    self.presentSimpleAlert(title: "Trip Not Ready", message: message)
+                    return
+                }
+
+                self.presentRouteFlow()
+            }
+        }
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -92,5 +116,14 @@ final class PlanningViewController: UIViewController, UITableViewDataSource {
         )
 
         stackView.setCustomSpacing(24, after: titleLabel)
+    }
+
+    private func presentRouteFlow() {
+        guard let navigationController = AppNavigator.makeTripFlowNavigationController(startingAt: "RouteViewController") else {
+            presentSimpleAlert(title: "Navigation Error", message: "Route screen could not be opened.")
+            return
+        }
+
+        present(navigationController, animated: true)
     }
 }

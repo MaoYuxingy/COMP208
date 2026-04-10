@@ -55,6 +55,10 @@ struct TripHistoryPlace: Decodable, Equatable {
         case dropped
         case tripID = "trip_id"
     }
+
+    nonisolated var isCurrentLocationOrigin: Bool {
+        placeID == RoutingPlaceIdentity.currentLocationPlaceID
+    }
 }
 
 struct TripHistoryRecord: Decodable, Equatable {

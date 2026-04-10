@@ -822,10 +822,10 @@ final class ARNavigationViewController: UIViewController {
     private func orderedPlaces(for state: RoutePlannerViewModel.ViewState) -> [Place] {
         let snapshot = container.tripPlannerStore.snapshot
         guard !state.optimizedPlaces.isEmpty else {
-            return snapshot.selectedPlaces
+            return snapshot.routingPlaces
         }
 
-        let indexedPlaces = Dictionary(uniqueKeysWithValues: snapshot.selectedPlaces.map { ($0.placeID, $0) })
+        let indexedPlaces = Dictionary(uniqueKeysWithValues: snapshot.routingPlaces.map { ($0.placeID, $0) })
         return state.optimizedPlaces.compactMap { indexedPlaces[$0] }
     }
 

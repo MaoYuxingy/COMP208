@@ -58,11 +58,13 @@ final class HomeViewController: UIViewController {
         let userEmail = container.sessionStore.currentSession?.user.email ?? "Guest"
         let latestTrip = snapshot.latestTripHistory?.displayTitle ?? snapshot.tripInfo.title
         let latestTripID = snapshot.latestOptimizedTripID ?? "No saved trip"
+        let locationStatus = snapshot.currentLocationPlace == nil ? "Unavailable" : "Ready"
 
         summaryLabel.text = [
             "Signed in as: \(userEmail)",
             "Current destination: \(latestTrip)",
             "Selected places: \(snapshot.selectedPlaces.count)",
+            "Device location: \(locationStatus)",
             "Latest trip ID: \(latestTripID)"
         ].joined(separator: "\n")
     }

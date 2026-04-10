@@ -6,6 +6,8 @@
 	<string>http://127.0.0.1:8000</string>
 	<key>NSCameraUsageDescription</key>
 	<string>NavIA uses the camera to provide live navigation guidance overlays.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>NavIA uses your location to start route planning from your current position.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

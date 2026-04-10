@@ -42,8 +42,10 @@ final class TripSummaryViewController: UIViewController {
     private func render() {
         let state = container.makeRoutePlannerViewModel().state
         let snapshot = container.tripPlannerStore.snapshot
-        let orderedPlaceNames = orderedPlaceNames(for: state)
+        let orderedPlaces = orderedPlaces(for: state)
+        let orderedPlaceNames = orderedPlaces.map(\.name)
         let droppedPlaceNames = droppedPlaceNames(for: state)
+        let attractionStopCount = orderedPlaces.filter { !$0.isCurrentLocationOrigin }.count
 
         titleLabel?.text = "Trip Summary"
         totalTimeLabel?.text = state.timeText
@@ -51,9 +53,11 @@ final class TripSummaryViewController: UIViewController {
 
         if let latestTripHistory = snapshot.latestTripHistory {
             let visitedPlaces = latestTripHistory.places
+                .filter { !$0.isCurrentLocationOrigin }
                 .filter { !($0.dropped ?? false) }
                 .sorted { ($0.visitOrder ?? .max) < ($1.visitOrder ?? .max) }
             let droppedPlaces = latestTripHistory.places
+                .filter { !$0.isCurrentLocationOrigin }
                 .filter { $0.dropped ?? false }
                 .compactMap(\.name)
 
@@ -76,7 +80,7 @@ final class TripSummaryViewController: UIViewController {
             return
         }
 
-        visitedStopsLabel?.text = "Visited Stops: \(orderedPlaceNames.count)"
+        visitedStopsLabel?.text = "Visited Stops: \(attractionStopCount)"
         summaryLabel.text = [
             "Destination: \(snapshot.tripInfo.title)",
             "Trip ID: \(snapshot.tripInfo.tripID)",
@@ -108,14 +112,18 @@ final class TripSummaryViewController: UIViewController {
     }
 
     private func orderedPlaceNames(for state: RoutePlannerViewModel.ViewState) -> [String] {
+        orderedPlaces(for: state).map(\.name)
+    }
+
+    private func orderedPlaces(for state: RoutePlannerViewModel.ViewState) -> [Place] {
         let snapshot = container.tripPlannerStore.snapshot
-        let indexedPlaces = Dictionary(uniqueKeysWithValues: snapshot.selectedPlaces.map { ($0.placeID, $0.name) })
+        let indexedPlaces = Dictionary(uniqueKeysWithValues: snapshot.routingPlaces.map { ($0.placeID, $0) })
         return state.optimizedPlaces.compactMap { indexedPlaces[$0] }
     }
 
     private func droppedPlaceNames(for state: RoutePlannerViewModel.ViewState) -> [String] {
         let snapshot = container.tripPlannerStore.snapshot
-        let indexedPlaces = Dictionary(uniqueKeysWithValues: snapshot.selectedPlaces.map { ($0.placeID, $0.name) })
+        let indexedPlaces = Dictionary(uniqueKeysWithValues: snapshot.routingPlaces.map { ($0.placeID, $0.name) })
         return state.droppedPlaces.compactMap { indexedPlaces[$0] }
     }
 

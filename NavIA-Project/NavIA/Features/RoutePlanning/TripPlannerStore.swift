@@ -2,6 +2,7 @@
 //  TripPlannerStore.swift
 //  NavIA
 
+import CoreLocation
 import Foundation
 
 enum TripPlannerStoreError: LocalizedError {
@@ -10,7 +11,7 @@ enum TripPlannerStoreError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .insufficientPlaces:
-            return "Add at least 2 places before optimizing a route."
+            return "Add one attraction and allow location access, or add at least two attractions before optimizing a route."
         }
     }
 }
@@ -21,6 +22,8 @@ final class TripPlannerStore {
         let searchQuery: String
         let searchResults: [Place]
         let selectedPlaces: [Place]
+        let currentLocationPlace: Place?
+        let routingPlaces: [Place]
         let selectedPlace: Place?
         let latestRoute: RouteResponse?
         let latestOptimizedTripID: String?
@@ -28,7 +31,25 @@ final class TripPlannerStore {
         let tripHistorySummaries: [TripHistorySummary]
 
         var canOptimize: Bool {
-            selectedPlaces.count >= 2
+            routingPlaces.count >= 2
+        }
+
+        var locationStatusText: String {
+            currentLocationPlace == nil
+                ? "Current device location not available. Route planning will fall back to the first selected attraction as the start."
+                : "Current device location is ready to be used as the trip origin."
+        }
+
+        var optimizationRequirementText: String {
+            if canOptimize {
+                return "Status: Ready to optimize"
+            }
+
+            if selectedPlaces.isEmpty {
+                return "Status: Add at least 1 attraction to start route planning"
+            }
+
+            return "Status: Allow location access or add 1 more attraction"
         }
     }
 
@@ -41,6 +62,7 @@ final class TripPlannerStore {
     private(set) var searchQuery: String
     private(set) var searchResults: [Place]
     private(set) var selectedPlaces: [Place]
+    private(set) var currentLocationPlace: Place?
     private(set) var selectedPlaceID: String?
     private(set) var latestRoute: RouteResponse?
     private(set) var latestOptimizedTripID: String?
@@ -57,6 +79,7 @@ final class TripPlannerStore {
         self.searchQuery = tripInfo.title
         self.searchResults = []
         self.selectedPlaces = selectedPlaces
+        self.currentLocationPlace = nil
         self.selectedPlaceID = selectedPlaces.first?.placeID
         self.latestRoute = nil
         self.latestOptimizedTripID = defaults.string(forKey: latestTripDefaultsKey)
@@ -65,11 +88,15 @@ final class TripPlannerStore {
     }
 
     var snapshot: Snapshot {
-        Snapshot(
+        let routingPlaces = makeRoutingPlaces()
+
+        return Snapshot(
             tripInfo: tripInfo,
             searchQuery: searchQuery,
             searchResults: searchResults,
             selectedPlaces: selectedPlaces,
+            currentLocationPlace: currentLocationPlace,
+            routingPlaces: routingPlaces,
             selectedPlace: selectedPlace,
             latestRoute: latestRoute,
             latestOptimizedTripID: latestOptimizedTripID,
@@ -85,6 +112,17 @@ final class TripPlannerStore {
         }
 
         return searchResults.first ?? selectedPlaces.first
+    }
+
+    func updateCurrentLocation(_ coordinate: CLLocationCoordinate2D?) {
+        let resolvedLocation = coordinate.map(Place.currentLocationOrigin(from:))
+        guard resolvedLocation != currentLocationPlace else {
+            return
+        }
+
+        currentLocationPlace = resolvedLocation
+        latestRoute = nil
+        notifyChange()
     }
 
     func setTripInfo(_ tripInfo: TripInfo) {
@@ -194,8 +232,16 @@ final class TripPlannerStore {
 
         return RouteRequest(
             tripInfo: tripInfo,
-            placesToVisit: selectedPlaces
+            placesToVisit: makeRoutingPlaces()
         )
+    }
+
+    private func makeRoutingPlaces() -> [Place] {
+        if let currentLocationPlace {
+            return [currentLocationPlace] + selectedPlaces
+        }
+
+        return selectedPlaces
     }
 
     private func notifyChange() {

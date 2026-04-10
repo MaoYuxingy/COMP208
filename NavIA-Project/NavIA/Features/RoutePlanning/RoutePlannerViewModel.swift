@@ -12,7 +12,8 @@ final class RoutePlannerViewModel {
         var selectedPlacesCount = 0
         var totalDistanceKm: Double?
         var totalTimeMinutes: Int?
-        var statusText = "Status: Add at least 2 places"
+        var statusText = "Status: Add at least 1 attraction to start route planning"
+        var locationStatusText = "Current device location not available."
         var distanceText = "Distance: -"
         var timeText = "Time: -"
         var optimizedPlaces: [String] = []
@@ -42,6 +43,7 @@ final class RoutePlannerViewModel {
     let store: TripPlannerStore
 
     private let routeService: RouteOptimizing
+    private let locationService: DeviceLocationProviding
 
     private(set) var state = ViewState() {
         didSet { onStateChange?(state) }
@@ -49,9 +51,11 @@ final class RoutePlannerViewModel {
 
     init(
         routeService: RouteOptimizing,
+        locationService: DeviceLocationProviding,
         store: TripPlannerStore = TripPlannerStore()
     ) {
         self.routeService = routeService
+        self.locationService = locationService
         self.store = store
 
         bindStore()
@@ -63,12 +67,32 @@ final class RoutePlannerViewModel {
     }
 
     func optimizeRoute() {
+        state.isLoading = true
+        state.statusText = "Status: Loading..."
+        state.errorMessage = nil
+
+        locationService.requestCurrentLocation { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+
+                switch result {
+                case .success(let coordinate):
+                    self.store.updateCurrentLocation(coordinate)
+
+                case .failure:
+                    self.store.updateCurrentLocation(nil)
+                }
+
+                self.continueOptimizing()
+            }
+        }
+    }
+
+    private func continueOptimizing() {
         do {
             let request = try store.makeRouteRequest()
-
-            state.isLoading = true
-            state.statusText = "Status: Loading..."
-            state.errorMessage = nil
 
             routeService.optimizeRoute(request: request) { [weak self] result in
                 DispatchQueue.main.async {
@@ -90,6 +114,7 @@ final class RoutePlannerViewModel {
 
     private func updateState(for snapshot: TripPlannerStore.Snapshot) {
         state.selectedPlacesCount = snapshot.selectedPlaces.count
+        state.locationStatusText = snapshot.locationStatusText
 
         if let latestRoute = snapshot.latestRoute, !state.isLoading {
             apply(response: latestRoute)
@@ -107,9 +132,7 @@ final class RoutePlannerViewModel {
         state.optimizedPlaces = []
         state.droppedPlaces = []
         state.polylines = []
-        state.statusText = snapshot.canOptimize
-            ? "Status: Ready to optimize"
-            : "Status: Add at least 2 places"
+        state.statusText = snapshot.optimizationRequirementText
     }
 
     private func handleOptimizationResult(_ result: Result<RouteResponse, Error>) {

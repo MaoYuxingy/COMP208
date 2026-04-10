@@ -64,11 +64,12 @@ final class AccountViewController: UIViewController {
         titleLabel?.text = "Account"
 
         if let latestTripHistory = snapshot.latestTripHistory {
+            let persistedAttractionCount = latestTripHistory.places.filter { !$0.isCurrentLocationOrigin }.count
             var lines = [
                 "Email: \(email)",
                 "Latest trip: \(latestTripHistory.displayTitle)",
                 "Trip ID: \(latestTripHistory.tripID)",
-                "Places saved: \(latestTripHistory.places.count)"
+                "Places saved: \(persistedAttractionCount)"
             ]
 
             if !snapshot.tripHistorySummaries.isEmpty {
