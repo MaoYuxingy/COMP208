@@ -8,7 +8,7 @@ import Foundation
 import CoreLocation
 
 enum RoutingPlaceIdentity {
-    nonisolated static let currentLocationPlaceID = "device-current-location"
+    nonisolated static let currentLocationPlaceID = "current_loc"
 }
 
 struct TripInfo: Codable, Equatable {
@@ -93,7 +93,7 @@ extension TripInfo {
             userID: "user001",
             title: "Liverpool Trip",
             startTime: 540,
-            totalAvailableTime: 480,
+            totalAvailableTime: 8,
             createdAt: createdAt
         )
     }
@@ -118,7 +118,7 @@ extension Place {
             name: "Current Location",
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
-            cached: true,
+            cached: false,
             visitDurationMinutes: 0,
             openTime: 0,
             closeTime: 1440

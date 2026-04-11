@@ -81,7 +81,7 @@ final class AccountViewController: UIViewController {
             }
 
             if let totalAvailableTime = latestTripHistory.totalAvailableTime {
-                lines.append("Available time: \(totalAvailableTime) min")
+                lines.append("Available time: \(formatAvailableHours(totalAvailableTime))")
             }
 
             detailsLabel.text = lines.joined(separator: "\n")
@@ -163,6 +163,10 @@ final class AccountViewController: UIViewController {
                 self.detailsLabel.text = "Failed to load trip history.\n\(error.localizedDescription)"
             }
         }
+    }
+
+    private func formatAvailableHours(_ hours: Int) -> String {
+        hours == 1 ? "1 hour" : "\(hours) hours"
     }
 
     private func applyLayout() {

@@ -111,7 +111,8 @@ def optimize_route(request: RouteRequest):
 
         start_time_sec = request.trip_info.start_time * 60
         current_time_sec = start_time_sec
-        end_time_sec = current_time_sec + (request.trip_info.total_available_time * 60)
+        # total_available_time is provided in hours, so convert to seconds here.
+        end_time_sec = current_time_sec + (request.trip_info.total_available_time * 3600)
 
         start_idx = 0
         current_idx = start_idx

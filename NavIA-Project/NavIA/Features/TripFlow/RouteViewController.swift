@@ -12,12 +12,20 @@ final class RouteViewController: UIViewController {
         let title: String?
         let subtitle: String?
         let markerText: String
+        let markerTintColor: UIColor
 
-        init(coordinate: CLLocationCoordinate2D, title: String, subtitle: String?, markerText: String) {
+        init(
+            coordinate: CLLocationCoordinate2D,
+            title: String,
+            subtitle: String?,
+            markerText: String,
+            markerTintColor: UIColor
+        ) {
             self.coordinate = coordinate
             self.title = title
             self.subtitle = subtitle
             self.markerText = markerText
+            self.markerTintColor = markerTintColor
         }
     }
 
@@ -176,8 +184,9 @@ final class RouteViewController: UIViewController {
         mapView.removeAnnotations(mapView.annotations)
 
         let orderedPlaces = orderedPlaces(for: state)
-        let renderedOverlayCount = addRouteOverlays(for: state, orderedPlaces: orderedPlaces)
-        addRouteAnnotations(for: orderedPlaces)
+        let visiblePlaces = visiblePlaces(for: orderedPlaces)
+        let renderedOverlayCount = addRouteOverlays(for: state, orderedPlaces: orderedPlaces, visiblePlaces: visiblePlaces)
+        addRouteAnnotations(for: state, orderedPlaces: orderedPlaces)
 
         if state.isLoading {
             mapPlaceholderLabel.isHidden = false
@@ -191,6 +200,8 @@ final class RouteViewController: UIViewController {
         if !hasRenderableMap {
             mapPlaceholderLabel.text = state.errorMessage
                 ?? "Route map will appear after route optimisation completes."
+        } else if renderedOverlayCount == 0, !visiblePlaces.isEmpty {
+            fitMapToRoute(overlays: [], places: visiblePlaces)
         }
     }
 
@@ -318,7 +329,11 @@ final class RouteViewController: UIViewController {
     }
 
     @discardableResult
-    private func addRouteOverlays(for state: RoutePlannerViewModel.ViewState, orderedPlaces: [Place]) -> Int {
+    private func addRouteOverlays(
+        for state: RoutePlannerViewModel.ViewState,
+        orderedPlaces: [Place],
+        visiblePlaces: [Place]
+    ) -> Int {
         var overlays: [MKPolyline] = state.polylines.compactMap { encodedPolyline in
             let coordinates = GooglePolylineDecoder.decode(encodedPolyline)
             guard coordinates.count >= 2 else {
@@ -341,39 +356,89 @@ final class RouteViewController: UIViewController {
         }
 
         mapView.addOverlays(overlays)
-        fitMapToRoute(overlays: overlays, places: orderedPlaces)
+        fitMapToRoute(overlays: overlays, places: visiblePlaces)
         return overlays.count
     }
 
-    private func addRouteAnnotations(for orderedPlaces: [Place]) {
-        guard !orderedPlaces.isEmpty else {
+    private func visiblePlaces(for orderedPlaces: [Place]) -> [Place] {
+        let snapshot = container.tripPlannerStore.snapshot
+        var visiblePlaces: [Place] = []
+        var seenPlaceIDs = Set<String>()
+
+        for place in orderedPlaces {
+            if seenPlaceIDs.insert(place.placeID).inserted {
+                visiblePlaces.append(place)
+            }
+        }
+
+        if let currentLocationPlace = snapshot.currentLocationPlace,
+           seenPlaceIDs.insert(currentLocationPlace.placeID).inserted {
+            visiblePlaces.append(currentLocationPlace)
+        }
+
+        for place in snapshot.selectedPlaces where seenPlaceIDs.insert(place.placeID).inserted {
+            visiblePlaces.append(place)
+        }
+
+        return visiblePlaces
+    }
+
+    private func addRouteAnnotations(for state: RoutePlannerViewModel.ViewState, orderedPlaces: [Place]) {
+        let snapshot = container.tripPlannerStore.snapshot
+        let visiblePlaces = visiblePlaces(for: orderedPlaces)
+        guard !visiblePlaces.isEmpty else {
             return
         }
 
         let lastIndex = orderedPlaces.count - 1
         let shouldSkipReturnMarker = orderedPlaces.count > 1 && orderedPlaces.first?.placeID == orderedPlaces.last?.placeID
+        let droppedPlaceIDs = Set(state.droppedPlaces)
+        var routeOrderLookup: [String: Int] = [:]
 
-        let annotations = orderedPlaces.enumerated().compactMap { index, place -> RouteStopAnnotation? in
-            if shouldSkipReturnMarker && index == lastIndex {
-                return nil
+        for (index, place) in orderedPlaces.enumerated() {
+            routeOrderLookup[place.placeID] = min(routeOrderLookup[place.placeID] ?? index, index)
+        }
+
+        let annotations = visiblePlaces.compactMap { place -> RouteStopAnnotation? in
+            if let routeIndex = routeOrderLookup[place.placeID] {
+                if shouldSkipReturnMarker && routeIndex == lastIndex {
+                    return nil
+                }
+
+                let markerText: String
+                let subtitle: String?
+                let markerTintColor: UIColor
+
+                if routeIndex == 0 {
+                    markerText = "S"
+                    subtitle = "Start"
+                    markerTintColor = .systemGreen
+                } else {
+                    markerText = "\(routeIndex)"
+                    subtitle = "Stop \(routeIndex)"
+                    markerTintColor = .systemBlue
+                }
+
+                return RouteStopAnnotation(
+                    coordinate: place.coordinate,
+                    title: place.name,
+                    subtitle: subtitle,
+                    markerText: markerText,
+                    markerTintColor: markerTintColor
+                )
             }
 
-            let markerText: String
-            let subtitle: String?
-
-            if index == 0 {
-                markerText = "S"
-                subtitle = "Start"
-            } else {
-                markerText = "\(index)"
-                subtitle = "Stop \(index)"
-            }
+            let isDropped = droppedPlaceIDs.contains(place.placeID)
+            let subtitle = isDropped ? "Dropped by optimiser" : "Selected stop"
+            let markerText = isDropped ? "D" : "P"
+            let markerTintColor: UIColor = isDropped ? .systemOrange : .systemPurple
 
             return RouteStopAnnotation(
                 coordinate: place.coordinate,
                 title: place.name,
                 subtitle: subtitle,
-                markerText: markerText
+                markerText: markerText,
+                markerTintColor: markerTintColor
             )
         }
 
@@ -435,7 +500,7 @@ extension RouteViewController: MKMapViewDelegate {
 
         annotationView.annotation = routeAnnotation
         annotationView.canShowCallout = true
-        annotationView.markerTintColor = routeAnnotation.markerText == "S" ? .systemGreen : .systemBlue
+        annotationView.markerTintColor = routeAnnotation.markerTintColor
         annotationView.glyphText = routeAnnotation.markerText
         return annotationView
     }
