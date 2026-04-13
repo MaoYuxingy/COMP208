@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>API_BASE_URL</key>
-	<string>http://127.0.0.1:8000</string>
+	<string>https://comp208.onrender.com</string>
 	<key>NSCameraUsageDescription</key>
 	<string>NavIA uses the camera to provide live navigation guidance overlays.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

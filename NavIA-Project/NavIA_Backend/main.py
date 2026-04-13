@@ -92,6 +92,23 @@ def get_db():
         db.close()
 
 
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "message": "NavIA backend is running.",
+        "docs_url": "/docs",
+    }
+
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "service": "NavIA Backend API",
+    }
+
+
 # ==========================================
 # Core business API: V5 route optimisation with time windows and round trip
 # ==========================================

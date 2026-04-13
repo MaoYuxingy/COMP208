@@ -1,10 +1,6 @@
 //
 //  SceneDelegate.swift
 //  NavIA
-//
-//  Created by 万俟修杰 on 2026/3/6.
-//
-
 import UIKit
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {

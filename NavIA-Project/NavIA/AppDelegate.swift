@@ -1,10 +1,6 @@
 //
 //  AppDelegate.swift
 //  NavIA
-//
-//  Created by 万俟修杰 on 2026/3/6.
-//
-
 import UIKit
 
 @main
