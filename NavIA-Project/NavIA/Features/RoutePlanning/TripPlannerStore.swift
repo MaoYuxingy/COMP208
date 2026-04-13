@@ -137,7 +137,7 @@ final class TripPlannerStore {
 
         searchQuery = destination
         searchResults = generatedPlaces
-        selectedPlaces = generatedPlaces
+        selectedPlaces = []
         selectedPlaceID = generatedPlaces.first?.placeID
         latestRoute = nil
 

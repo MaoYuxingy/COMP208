@@ -60,6 +60,26 @@ struct APIErrorPayload: Decodable {
 final class APIService: RouteOptimizing, TripHistoryFetching {
     static let shared = APIService()
 
+    private static let fractionalISO8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let standardISO8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let sqliteDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter
+    }()
+
     private let baseURL: URL
     private let session: URLSession
     private let sessionStore: UserSessionStore
@@ -80,7 +100,21 @@ final class APIService: RouteOptimizing, TripHistoryFetching {
         self.encoder = encoder
 
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let stringValue = try container.decode(String.self)
+
+            if let date = Self.fractionalISO8601Formatter.date(from: stringValue)
+                ?? Self.standardISO8601Formatter.date(from: stringValue)
+                ?? Self.sqliteDateFormatter.date(from: stringValue) {
+                return date
+            }
+
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported date format: \(stringValue)"
+            )
+        }
         self.decoder = decoder
     }
 
