@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
 import googlemaps
@@ -10,8 +10,7 @@ from dotenv import load_dotenv
 from database import engine, SessionLocal
 import models
 from auth_routes import router as auth_router
-
-
+from schemas import Place, TripInfo, RouteRequest, RouteResponse # 导入最新的 schemas
 
 # 1. 加载环境变量并初始化 Google Maps 客户端
 load_dotenv()
@@ -37,46 +36,21 @@ app.include_router(auth_router)
 # 4. 初始化数据库表结构
 models.Base.metadata.create_all(bind=engine)
 
+
 # ==========================================
-# 数据模型 (Pydantic Schemas - V5 升级版)
+# 数据库依赖注入 (水管工函数)
 # ==========================================
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-class Place(BaseModel):
-    place_id: str
-    name: str
-    latitude: float
-    longitude: float
-    cached: bool = False
-    visit_duration_minutes: int = 60
-    open_time: int = 0
-    close_time: int = 1440
-
-class TripInfo(BaseModel):
-    trip_id: str
-    user_id: str
-    title: str
-    start_time: int = 480 
-    total_available_time: int
-    created_at: datetime
-
-class RouteRequest(BaseModel):
-    trip_info: TripInfo
-    places_to_visit: List[Place]
-
-class RouteResponse(BaseModel):
-    route_id: str
-    status: str
-    total_distance_km: float
-    total_time_minutes: int
-    optimized_order: List[str]
-    dropped_places: List[str]
-    # --- 新增：用于前端绘制真实街道轨迹的编码字符串列表 ---
-    polylines: List[str] = []
 
 # ==========================================
 # 核心业务接口：V5 路线规划与闭环优化
 # ==========================================
-
 @app.post("/api/v1/optimize-route", response_model=RouteResponse)
 def optimize_route(request: RouteRequest):
     if not request.places_to_visit or len(request.places_to_visit) < 2:
@@ -88,9 +62,10 @@ def optimize_route(request: RouteRequest):
         # 调用 Google Maps 距离矩阵 API
         matrix = gmaps.distance_matrix(locations, locations, mode="driving")
         
-        start_time_sec = request.trip_info.start_time * 60
+        start_time_sec = request.trip_info.start_time * 3600
         current_time_sec = start_time_sec
-        end_time_sec = current_time_sec + (request.trip_info.total_available_time * 60)
+        # 【已修复 Bug】将小时换算为秒，避免误把预算当成几分钟而全部抛弃
+        end_time_sec = current_time_sec + (request.trip_info.total_available_time * 3600)
         
         start_idx = 0 
         current_idx = start_idx
@@ -234,24 +209,10 @@ def optimize_route(request: RouteRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"路径规划暂时不可用: {str(e)}")
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
 
-
-from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
-from database import SessionLocal  # 注意这里：我们改为导入 SessionLocal
-
-# 1. 自己造一个“水管工”函数，负责开关数据库
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# 2. 你的历史行程查询接口
+# ==========================================
+# 历史行程查询接口 (已移至正确位置)
+# ==========================================
 @app.get("/api/v1/trips/{trip_id}")
 def get_trip_history(trip_id: str, db: Session = Depends(get_db)):
     # 去数据库里查对应的行程
@@ -264,3 +225,10 @@ def get_trip_history(trip_id: str, db: Session = Depends(get_db)):
     # 查到了直接返回
     return trip
 
+
+# ==========================================
+# 程序启动入口 (必须在最底部)
+# ==========================================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
