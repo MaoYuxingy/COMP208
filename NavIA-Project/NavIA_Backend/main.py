@@ -62,9 +62,14 @@ def optimize_route(request: RouteRequest):
         # 调用 Google Maps 距离矩阵 API
         matrix = gmaps.distance_matrix(locations, locations, mode="driving")
         
-        start_time_sec = request.trip_info.start_time * 3600
+        # ==========================================
+        # 【核心修复：时间单位换算对齐】
+        # ==========================================
+        # 前端约定: start_time 为分钟 (如 540 表示 9:00 AM) -> 需乘 60 转为秒
+        start_time_sec = request.trip_info.start_time * 60
         current_time_sec = start_time_sec
-        # 【已修复 Bug】将小时换算为秒，避免误把预算当成几分钟而全部抛弃
+        
+        # 前端约定: total_available_time 为小时 (如 4 表示 4小时) -> 需乘 3600 转为秒
         end_time_sec = current_time_sec + (request.trip_info.total_available_time * 3600)
         
         start_idx = 0 
@@ -92,6 +97,7 @@ def optimize_route(request: RouteRequest):
                     time_to = element_to['duration']['value']
                     time_return = element_return['duration']['value']
                     
+                    # 这里的 visit_duration_minutes, open_time, close_time 前端约定均为分钟 -> 乘 60 转为秒
                     visit_time = request.places_to_visit[next_idx].visit_duration_minutes * 60
                     open_time_sec = request.places_to_visit[next_idx].open_time * 60
                     close_time_sec = request.places_to_visit[next_idx].close_time * 60
